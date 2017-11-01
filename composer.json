@@ -1,0 +1,27 @@
+{
+    "name": "cosmicvibes/odoolaravel",
+    "description": "A collection of classes to make interacting with an Odoo erp instance simpler.",
+    "type": "library",
+    "require": {
+        "edujugon/laradoo": "^1.1"
+    },
+    "license": "GPLv3",
+    "authors": [
+        {
+            "name": "Charlie Pearce",
+            "email": "cjp@cosmicvibes.net"
+        }
+    ],
+    "autoload": {
+        "psr-4": {
+            "Cosmicvibes\\Odoolaravel\\": "src/"
+        }
+    },
+    "extra": {
+        "laravel": {
+            "providers": [
+                "Cosmicvibes\\Odoolaravel\\OdooServiceProvider"
+            ]
+        }
+    }
+}
