@@ -26,6 +26,9 @@ class OdooProduct extends Odoo
     public $price;
     public $sale_price_vat_rate = 0;
 
+    public $taxes_id;
+    public $supplier_taxes_id;
+
     public $cost_price;
     public $cost_price_vat_rate = 0;
 
@@ -58,7 +61,9 @@ class OdooProduct extends Odoo
 
         // TODO: error check for duplicate records?
         // TODO: Proper exception handling
+        // TODO: Ensure all fields are aadded
         $existing_product_template_id = $this->client->where('id', '=', $product_template_id)->search('product.template');
+//        echo "Product template id: " . $product_template_id;
         if ($existing_product_template_id === 1) {
             dd('product id not found');
         } else {
@@ -76,24 +81,14 @@ class OdooProduct extends Odoo
             $this->sale_ok              = $existing_product_template['sale_ok'];
             $this->purchase_ok          = $existing_product_template['purchase_ok'];
 
+            $this->taxes_id             = $existing_product_template['taxes_id'];
+            $this->supplier_taxes_id    = $existing_product_template['supplier_taxes_id'];
+
             // Add extra fields from config
             $config_extra_product_fields = config('odoolaravel.product_extra_fields');
             foreach ($config_extra_product_fields as $key => $value) {
                 $this->{"$value"}       = $existing_product_template[$key];
             }
-
-            if ($existing_product_template['product_variant_ids']) {
-                $this->variant_ids          = $existing_product_template['product_variant_ids'];
-                foreach ($this->variant_ids as $variant_id) {
-                    $variant_code = $this->client->where('attribute_id', '=', 1)->where('id', '=', $variant_id)->get('product.attribute.value')->first()['name'];
-                    $this->variant_data[] =
-                        [
-                            'id' => $variant_id,
-                            'code' => $variant_code
-                        ];
-                }
-            }
-
         }
 
         $this->product_template_id = $product_template_id;
@@ -102,7 +97,6 @@ class OdooProduct extends Odoo
 
     public function save() {
         // TODO: Validate all required data before saving
-
         // TODO: Exceptions when not found!!!
         // TODO: Delete old variants?
         if ($this->variants) {
@@ -113,7 +107,6 @@ class OdooProduct extends Odoo
                         'id'    => $variant_id,
                         'code'  => $variant
                     ];
-
                 $this->variant_ids[] = $variant_id;
             }
         }
@@ -139,6 +132,16 @@ class OdooProduct extends Odoo
         $divisor = ($this->cost_price_vat_rate / 100) + 1;
         $this->cost_price = $this->cost_price / $divisor;
 
+        $taxes = [
+            [5, 0, 0],
+            [4, $this->taxes_id, 0]
+        ];
+
+        $supplier_taxes = [
+            [5, 0, 0],
+            [4, $this->supplier_taxes_id, 0]
+        ];
+
         // Standard Odoo Product Data
         $product_data = [
             'name'                  => $this->name,
@@ -149,7 +152,10 @@ class OdooProduct extends Odoo
             'image'                 => $this->image_data,
             'sale_ok'               => $this->sale_ok,
             'purchase_ok'           => $this->purchase_ok,
-            'default_code'          => $this->sku
+            'taxes_id'              => $taxes,
+            'supplier_taxes_id'     => $supplier_taxes,
+            //TODO: Make this generic
+            'x_studio_field_xj55w'  => $this->sku
         ];
 
         // Add extra fields from config
@@ -186,6 +192,7 @@ class OdooProduct extends Odoo
 
             $existing_product_attribute_line_id = $this->client
                 ->where('product_tmpl_id', '=', $this->product_template_id)
+                // Size
                 ->where('attribute_id', '=', 1)
                 ->search('product.attribute.line')->first();
 
@@ -198,16 +205,16 @@ class OdooProduct extends Odoo
                 $this->client->create('product.attribute.line', $product_attribute_line_data);
             }
 
-            // Create variants
-            foreach ($this->variant_data as $id => $code) {
+            foreach ($this->variant_data as $variant) {
 
                 // Create or update variants;
                 // Delete any existing ones not on this list.
+                // TODO: Find a way to sort these. They default to sorting by internal reference
                 $product_variant_data = [
                     'product_tmpl_id'       => $this->product_template_id,
-                    'attribute_value_ids'   => array(array(6, false, array([$id]))),
-                    'default_code'          => $this->sku . "-" . $code,
-//                    'standard_price'        => $this->cost_price,
+                    'attribute_value_ids'   => array(array(6, false, array($variant['id']))),
+                    // TODO: get this
+                    'default_code'          => $this->sku . "-" . $variant['code'],
                 ];
 
                 // If a pricelist is not specified,then set the sale price directly
@@ -217,10 +224,23 @@ class OdooProduct extends Odoo
 
                 $existing_variant_id = $this->client
                     ->where('product_tmpl_id', '=', $this->product_template_id)
-                    ->where('attribute_value_ids', '=', $id)
-                    ->search('product.product')->first();
+                    ->where('attribute_value_ids', '=', $variant['id'])
+                    ->search('product.product');
 
-                if ($existing_variant_id != null) {
+                // TODO: I hate this code soooooo much
+                $VARIANT_UPDATE = FALSE;
+                if (is_object($existing_variant_id)) {
+                    if (count($existing_variant_id) > 0) {
+                        $existing_variant_id = $existing_variant_id[0];
+                        $VARIANT_UPDATE = TRUE;
+                    }
+                } else {
+                    if ($existing_variant_id != 1) {
+                        $VARIANT_UPDATE = TRUE;
+                    }
+                }
+
+                if ($VARIANT_UPDATE) {
                     $this->client
                         ->where('id', '=', $existing_variant_id)
                         ->update('product.product', $product_variant_data);
@@ -239,20 +259,13 @@ class OdooProduct extends Odoo
             }
 
             // Save the ids for later use
+            //TODO Throw exeception if variant not found! Really hard to debug else.
             $variants = $this->client->where('product_tmpl_id', '=', $this->product_template_id)->get('product.product');
             foreach ($variants as $variant) {
                 $this->product_variant_ids[] = $variant['id'];
             }
 
         }
-
-//        // Add SKU. For unknown reasons this must be added after the initial creation.
-//        if ($this->sku) {
-//            $this->client->where('id', '=', $this->product_template_id)
-//                ->update('product.template',
-//                    ['default_code' => $this->sku]
-//                );
-//        }
 
         if ($this->print_product_template_id && $this->plain_product_template_id) {
 
@@ -340,7 +353,6 @@ class OdooProduct extends Odoo
                             'operation_id' => false,
                             'has_attachments' => false,
                             'child_bom_id' => false,
-//                                'attribute_value_ids' => [6, $product_variant['attribute_value_ids'][0], 0,]
                             'attribute_value_ids'   => array(array(6, false, array([$product_variant['attribute_value_ids'][0]]))),
                             'sequence' => $bom_sequence,
                         ];
@@ -376,6 +388,37 @@ class OdooProduct extends Odoo
                         'bom_line_ids' => $bom_line_ids,
                     ]
                 );
+
+            // No create a re-ordering rule
+            foreach ($this->product_variant_ids as $product_variant_id) {
+
+                $reordering_rule_data = [
+                    'product_max_qty'   => 0,
+                    'product_min_qty'   => 0,
+                    'qty_multiple'      => 1,
+                    'product_id'        => $product_variant_id,
+                    'lead_days'         => 1,
+                    'active'            => true,
+                ];
+
+                $existing_stock_warehouse_orderpoint_id = $this->client
+                    ->where('product_max_qty', '=', 0)
+                    ->where('product_min_qty', '=', 0)
+                    ->where('qty_multiple', '=', 1)
+                    ->where('product_id', '=', $product_variant_id)
+                    ->where('lead_days', '=', 1)
+                    ->where('active', '=', true)
+                    ->search('stock.warehouse.orderpoint')->first();
+
+                if ($existing_stock_warehouse_orderpoint_id != null) {
+                    $this->client
+                        ->where('id', '=', $existing_stock_warehouse_orderpoint_id)
+                        ->update('stock.warehouse.orderpoint', $reordering_rule_data);
+                } else {
+                    $this->client->create('stock.warehouse.orderpoint', $reordering_rule_data);
+                }
+            }
+
         }
 
         if ($this->pricelist_id != null) {
@@ -415,22 +458,3 @@ class OdooProduct extends Odoo
     }
 
 }
-
-//(0,_ ,{' field': value}): This creates a new record and links it to this one
-//(1, id,{' field': value}): This updates values on an already linked record
-//(2, id,_): This unlinks and deletes a related record
-//(3, id,_): This unlinks but does not delete a related record
-//(4, id,_): This links an already existing record
-//(5,_,_): This unlinks but does not delete all linked records
-//(6,_,[ ids]): This replaces the list of linked records with the provided list
-//
-//    The underscore symbol used above represents irrelevant values, usually filled with 0 or False.
-
-// TODO: Add these?
-
-//You have updated Name (English (UK)). Update translations
-//You have updated Sale Description (English (UK)). Update translations
-//You have updated Purchase Description (English (UK)). Update translations
-//You have updated Description on Picking (English (UK)). Update translations
-//You have updated Description on Delivery Orders (English (UK)). Update translations
-//You have updated Description on Receptions (English (UK)). Update translations

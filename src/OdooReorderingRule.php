@@ -88,4 +88,3 @@ class OdooReorderingRule extends Odoo
 
     }
 }
-
