@@ -1,7 +1,7 @@
 <?php
 
 return [
-    'api-suffix' => env('ODOO_API-SUFFIX','xmlrpc'),     // 'xmlrpc' from version 7.0 and earlier, 'xmlrpc/2' from version 8.0 and above.
+    'api-suffix' => env('ODOO_API_SUFFIX','xmlrpc'),     // 'xmlrpc' from version 7.0 and earlier, 'xmlrpc/2' from version 8.0 and above.
 
     //Credentials
     'host'       => env('ODOO_HOST'),
